@@ -1,0 +1,20 @@
+{
+    "username": "default username",
+    "repository": "default repository name",
+    "access_token": "valid access toke (if your repository is private, mandatory)",
+    "message_to_assignee": "Please check the assigned issues.",
+    "label_conditions": {
+        "urgents": [
+            "urgent"
+        ],
+        "pendings": [
+            "pending"
+        ]
+    },
+    "user_mappings": [
+        {
+            "github_name": "github name",
+            "slack_name": "slack name"
+        }
+    ]
+}
