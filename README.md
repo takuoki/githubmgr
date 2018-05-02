@@ -13,17 +13,15 @@ This is a CLI tool to help you to manage your projects with GitHub.
 ```text
 $ ./githubmgr issue
 # Issue & PR List for `phoenix-activity`
-    task count: 26
-    urgent: 132, 172, 258
+    task count: 6
+    urgent: 10, 12
 
-````
-```
-- member-a       (3): 10, 13, 15
-- member-b       (1): 12
-- member-c       (1): 9
-- (No Assignees) (2): 16, 17
-```
-````
+    ```
+    - member-a       (3): 10, 13, 15
+    - member-b       (2): 12, 15
+    - member-c       (1): 9
+    - (No Assignees) (2): 16, 17
+    ```
 
 @member-a, @member-b, @member-c
 Please check the assigned issues.
