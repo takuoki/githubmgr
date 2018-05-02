@@ -1,7 +1,7 @@
 {
     "username": "default username",
     "repository": "default repository name",
-    "access_token": "valid access toke (if your repository is private, mandatory)",
+    "access_token": "valid access token (if your repository is private, mandatory)",
     "message_to_assignee": "Please check the assigned issues.",
     "label_conditions": {
         "urgents": [

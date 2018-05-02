@@ -33,11 +33,10 @@ const (
 )
 
 type issueInfo struct {
-	TaskTable    []taskAssign
-	AssigneeList []string
-	Urgents      []int
-	NoAssignees  []int
-	TaskCount    int
+	TaskTable   taskAssignList
+	Urgents     []int
+	NoAssignees []int
+	TaskCount   int
 }
 
 type taskAssign struct {
@@ -59,6 +58,14 @@ func (t taskAssignList) Less(i, j int) bool {
 	return len(t[i].Tasks) > len(t[j].Tasks)
 }
 
+func (t taskAssignList) GetAssigneeList() []string {
+	l := []string{}
+	for _, v := range t {
+		l = append(l, v.Assignee)
+	}
+	return l
+}
+
 func issueList(c *cli.Context) error {
 
 	conf, err := readConfig(c)
@@ -71,12 +78,14 @@ func issueList(c *cli.Context) error {
 		return err
 	}
 
-	iInfo, err := createTaskTable(c, conf, issues)
+	except := c.Bool("except")
+
+	iInfo, err := createTaskTable(conf, issues, except)
 	if err != nil {
 		return err
 	}
 
-	return outputResult(c, conf, iInfo)
+	return outputResult(conf, iInfo, except)
 }
 
 func getIssues(conf *config) ([]issue, error) {
@@ -103,7 +112,7 @@ func getIssues(conf *config) ([]issue, error) {
 	return issues, nil
 }
 
-func createTaskTable(c *cli.Context, conf *config, issues []issue) (issueInfo, error) {
+func createTaskTable(conf *config, issues []issue, except bool) (issueInfo, error) {
 
 	taskMap := make(map[string][]int)
 	urgents := []int{}
@@ -112,7 +121,7 @@ func createTaskTable(c *cli.Context, conf *config, issues []issue) (issueInfo, e
 
 ISSUE_LOOP:
 	for _, issue := range issues {
-		if c.Bool("except") {
+		if except {
 			for _, label := range issue.Labels {
 				if existStr(conf.LabelConditions.Pendings, label.Name) {
 					continue ISSUE_LOOP
@@ -157,15 +166,14 @@ ISSUE_LOOP:
 	}
 
 	return issueInfo{
-		TaskTable:    taskTable,
-		AssigneeList: assigneeList,
-		Urgents:      urgents,
-		NoAssignees:  noAssignees,
-		TaskCount:    taskCount,
+		TaskTable:   taskTable,
+		Urgents:     urgents,
+		NoAssignees: noAssignees,
+		TaskCount:   taskCount,
 	}, nil
 }
 
-func outputResult(c *cli.Context, conf *config, iInfo issueInfo) error {
+func outputResult(conf *config, iInfo issueInfo, except bool) error {
 
 	// prepare
 	maxLength := 0
@@ -183,7 +191,7 @@ func outputResult(c *cli.Context, conf *config, iInfo issueInfo) error {
 
 	fmt.Printf("\ttask count: %d\n", iInfo.TaskCount)
 	fmt.Printf("\turgent: %s\n", nvl(concatInt(iInfo.Urgents, ", ")))
-	if c.Bool("except") {
+	if except {
 		fmt.Printf("\texcepts labels: %s\n", nvl(concatStrWithBracket(conf.LabelConditions.Pendings, ", ", "`")))
 	}
 	fmt.Println()
@@ -198,7 +206,7 @@ func outputResult(c *cli.Context, conf *config, iInfo issueInfo) error {
 	}
 	fmt.Println("```")
 
-	fmt.Printf("\n%s\n", concatStrWith2Brackets(iInfo.AssigneeList, ", ", "@", ""))
+	fmt.Printf("\n%s\n", concatStrWith2Brackets(iInfo.TaskTable.GetAssigneeList(), ", ", "@", ""))
 	if conf.Message != nil {
 		fmt.Println(*conf.Message)
 	}
