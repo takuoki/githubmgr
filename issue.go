@@ -92,6 +92,7 @@ func getIssues(conf *config) ([]issue, error) {
 
 	values := url.Values{}
 	values.Add("state", "open")
+	values.Add("per_page", "1000")
 
 	rsp, err := http.Get(getIssueURL(conf, values))
 	if err != nil {
