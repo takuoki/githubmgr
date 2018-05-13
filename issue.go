@@ -1,13 +1,9 @@
 package main
 
 import (
-	"encoding/json"
-	"errors"
 	"fmt"
-	"io/ioutil"
-	"net/http"
-	"net/url"
 	"sort"
+	"strconv"
 
 	"github.com/urfave/cli"
 )
@@ -17,7 +13,7 @@ var (
 		Name:  "issue",
 		Usage: "management related to issues or pull requests",
 		Action: func(c *cli.Context) error {
-			return issueList(c)
+			return action(c, issueMain)
 		},
 		Flags: []cli.Flag{
 			cli.BoolFlag{
@@ -58,62 +54,61 @@ func (t taskAssignList) Less(i, j int) bool {
 	return len(t[i].Tasks) > len(t[j].Tasks)
 }
 
-func (t taskAssignList) GetAssigneeList() []string {
+func (t taskAssignList) GetAssigneeList(userMap map[string]string) []string {
 	l := []string{}
 	for _, v := range t {
-		l = append(l, v.Assignee)
+		l = append(l, getValueWithMap(v.Assignee, userMap))
 	}
 	return l
 }
 
-func issueList(c *cli.Context) error {
+func issueMain(c *cli.Context, conf *config) error {
 
-	conf, err := readConfig(c)
+	cli := ghIssueClient{}
+	cli.SetConf(conf)
+
+	issues, err := getIssues(&cli)
 	if err != nil {
 		return err
 	}
 
-	issues, err := getIssues(conf)
+	exceptLabels := []string{}
+	if c.Bool("except") {
+		exceptLabels = conf.LabelConditions.Pendings
+	}
+
+	iInfo, err := createTaskTable(issues, conf.LabelConditions.Urgents, exceptLabels)
 	if err != nil {
 		return err
 	}
 
-	except := c.Bool("except")
+	fmt.Print(getResultStr(iInfo, conf.Repo, conf.Message, exceptLabels, conf.UserMappings))
 
-	iInfo, err := createTaskTable(conf, issues, except)
-	if err != nil {
-		return err
-	}
-
-	return outputResult(conf, iInfo, except)
+	return nil
 }
 
-func getIssues(conf *config) ([]issue, error) {
+func getIssues(cli ghIssueClientI) ([]ghIssue, error) {
 
-	values := url.Values{}
-	values.Add("state", "open")
-	values.Add("per_page", "1000")
+	cli.AddValue("state", "open")
+	cli.AddValue("per_page", "100")
 
-	rsp, err := http.Get(getIssueURL(conf, values))
-	if err != nil {
-		return nil, err
-	}
-	if rsp.StatusCode != http.StatusOK {
-		return nil, errors.New("cannot get issue list. please check URL information")
-	}
-
-	defer rsp.Body.Close()
-	rspBody, _ := ioutil.ReadAll(rsp.Body)
-
-	issues := []issue{}
-	if err := json.Unmarshal(rspBody, &issues); err != nil {
-		return nil, err
+	issues := []ghIssue{}
+	for i := 1; i < 100; i++ {
+		cli.AddValue("page", strconv.Itoa(i))
+		tmpIssues, err := cli.GetIssues()
+		if err != nil {
+			return nil, err
+		}
+		if len(tmpIssues) <= 0 {
+			break
+		}
+		issues = append(issues, tmpIssues...)
 	}
 
 	return issues, nil
 }
 
-func createTaskTable(conf *config, issues []issue, except bool) (issueInfo, error) {
+func createTaskTable(issues []ghIssue, urgentLabels, exceptLabels []string) (issueInfo, error) {
 
 	taskMap := make(map[string][]int)
 	urgents := []int{}
@@ -122,29 +117,28 @@ func createTaskTable(conf *config, issues []issue, except bool) (issueInfo, erro
 
 ISSUE_LOOP:
 	for _, issue := range issues {
-		if except {
+		if len(exceptLabels) > 0 {
 			for _, label := range issue.Labels {
-				if existStr(conf.LabelConditions.Pendings, label.Name) {
+				if existStr(exceptLabels, label.Name) {
 					continue ISSUE_LOOP
 				}
 			}
 		}
 		taskCount++
-		for _, label := range issue.Labels {
-			if existStr(conf.LabelConditions.Urgents, label.Name) {
-				urgents = append(urgents, issue.Number)
+		if len(urgentLabels) > 0 {
+			for _, label := range issue.Labels {
+				if existStr(urgentLabels, label.Name) {
+					urgents = append(urgents, issue.Number)
+					break
+				}
 			}
 		}
 		if len(issue.Assignees) > 0 {
 			for _, user := range issue.Assignees {
-				username, ok := conf.UserMappings[user.Name]
-				if !ok {
-					username = user.Name
-				}
-				if _, ok := taskMap[username]; ok {
-					taskMap[username] = append(taskMap[username], issue.Number)
+				if _, ok := taskMap[user.Name]; ok {
+					taskMap[user.Name] = append(taskMap[user.Name], issue.Number)
 				} else {
-					taskMap[username] = []int{issue.Number}
+					taskMap[user.Name] = []int{issue.Number}
 				}
 			}
 		} else {
@@ -161,10 +155,6 @@ ISSUE_LOOP:
 		taskTable = append(taskTable, taskAssign{Assignee: k, Tasks: v})
 	}
 	sort.Sort(taskTable)
-	assigneeList := []string{}
-	for _, v := range taskTable {
-		assigneeList = append(assigneeList, v.Assignee)
-	}
 
 	return issueInfo{
 		TaskTable:   taskTable,
@@ -174,7 +164,8 @@ ISSUE_LOOP:
 	}, nil
 }
 
-func outputResult(conf *config, iInfo issueInfo, except bool) error {
+func getResultStr(iInfo issueInfo, repo, message *string,
+	exceptLabels []string, userMap map[string]string) string {
 
 	// prepare
 	maxLength := 0
@@ -188,33 +179,32 @@ func outputResult(conf *config, iInfo issueInfo, except bool) error {
 	}
 
 	// output
-	fmt.Printf("# Issue & PR List for `%s`\n", *conf.Repo)
+	var rstStr string
+	rstStr += fmt.Sprintf("# Issue & PR List for `%s`\n", *repo)
 
-	fmt.Printf("\ttask count: %d\n", iInfo.TaskCount)
-	fmt.Printf("\turgent: %s\n", nvl(concatInt(iInfo.Urgents, ", ")))
-	if except {
-		fmt.Printf("\texcepts labels: %s\n", nvl(concatStrWithBracket(conf.LabelConditions.Pendings, ", ", "`")))
+	rstStr += fmt.Sprintf("\ttask count: %d\n", iInfo.TaskCount)
+	rstStr += fmt.Sprintf("\turgent: %s\n", nvl(concatInt(iInfo.Urgents, ", ")))
+	if len(exceptLabels) > 0 {
+		rstStr += fmt.Sprintf("\texcepts labels: %s\n", nvl(concatStrWithBracket(exceptLabels, ", ", "`")))
 	}
-	fmt.Println()
-
-	fmt.Println("```")
+	rstStr += "\n```\n"
 	for _, t := range iInfo.TaskTable {
-		fmt.Println(createOneLine(t.Assignee, t.Tasks, iInfo, &maxLength))
+		rstStr += createOneLine(getValueWithMap(t.Assignee, userMap), t.Tasks, iInfo, &maxLength)
 	}
 
 	if len(iInfo.NoAssignees) > 0 {
-		fmt.Println(createOneLine(noAssigneesLabel, iInfo.NoAssignees, iInfo, &maxLength))
+		rstStr += createOneLine(noAssigneesLabel, iInfo.NoAssignees, iInfo, &maxLength)
 	}
-	fmt.Println("```")
+	rstStr += "```\n"
 
-	fmt.Printf("\n%s\n", concatStrWith2Brackets(iInfo.TaskTable.GetAssigneeList(), ", ", "@", ""))
-	if conf.Message != nil {
-		fmt.Println(*conf.Message)
+	rstStr += fmt.Sprintf("\n%s\n", concatStrWith2Brackets(iInfo.TaskTable.GetAssigneeList(userMap), ", ", "@", ""))
+	if message != nil {
+		rstStr += fmt.Sprintln(*message)
 	}
 
-	return nil
+	return rstStr
 }
 
 func createOneLine(name string, tasks []int, iInfo issueInfo, maxLength *int) string {
-	return fmt.Sprintf("- %s%s (%d): %s", name, space(*maxLength-len(name)), len(tasks), concatInt(tasks, ", "))
+	return fmt.Sprintf("- %s%s (%d): %s\n", name, space(*maxLength-len(name)), len(tasks), concatInt(tasks, ", "))
 }

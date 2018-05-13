@@ -12,6 +12,13 @@ func nvl(str string) string {
 	return str
 }
 
+func getValueWithMap(str string, m map[string]string) string {
+	if v, ok := m[str]; ok {
+		return v
+	}
+	return str
+}
+
 func existInt(list []int, i int) bool {
 	for _, v := range list {
 		if v == i {
@@ -24,6 +31,15 @@ func existInt(list []int, i int) bool {
 func existStr(list []string, str string) bool {
 	for _, v := range list {
 		if v == str {
+			return true
+		}
+	}
+	return false
+}
+
+func existStrs(list []string, strs []string) bool {
+	for _, str := range strs {
+		if existStr(list, str) {
 			return true
 		}
 	}

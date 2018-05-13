@@ -50,3 +50,13 @@ func main() {
 		return
 	}
 }
+
+func action(c *cli.Context, f func(*cli.Context, *config) error) error {
+
+	conf, err := readConfig(c)
+	if err != nil {
+		return err
+	}
+
+	return f(c, conf)
+}
