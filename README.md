@@ -12,7 +12,7 @@ This is a CLI tool to help you to manage your projects with GitHub.
 
 ```text
 $ ./githubmgr issue
-# Issue & PR List for `phoenix-activity`
+# Issue & PR List for `test-repository`
     task count: 7
     urgent: 10, 12
 
