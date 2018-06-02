@@ -1,114 +1,91 @@
 package main
 
 import (
+	"context"
 	"fmt"
+	"io"
+	"os"
 	"sort"
-	"strconv"
 
+	"github.com/google/go-github/github"
 	"github.com/urfave/cli"
-)
-
-var (
-	issueCmd = cli.Command{
-		Name:  "issue",
-		Usage: "management related to issues or pull requests",
-		Action: func(c *cli.Context) error {
-			return action(c, issueMain)
-		},
-		Flags: []cli.Flag{
-			cli.BoolFlag{
-				Name:  "except, e",
-				Usage: "except issues attached \"pending\" labels",
-			},
-		},
-	}
 )
 
 const (
 	noAssigneesLabel = "(No Assignees)"
 )
 
-type issueInfo struct {
-	TaskTable   taskAssignList
-	Urgents     []int
-	NoAssignees []int
-	TaskCount   int
+func init() {
+	cmdList = append(cmdList, cli.Command{
+		Name:  "issue",
+		Usage: "management related to issues or pull requests",
+		Action: func(c *cli.Context) error {
+			return action(c, &issue{Out: os.Stdout})
+		},
+		Flags: []cli.Flag{
+			cli.BoolFlag{
+				Name:  "except, e",
+				Usage: "except issues attached low level labels",
+			},
+		},
+	})
 }
 
-type taskAssign struct {
-	Assignee string
-	Tasks    []int
+type issue struct {
+	Out io.Writer
 }
 
-type taskAssignList []taskAssign
+func (i *issue) Run(c *cli.Context, conf *config, client *github.Client) error {
 
-func (t taskAssignList) Len() int {
-	return len(t)
-}
-
-func (t taskAssignList) Swap(i, j int) {
-	t[i], t[j] = t[j], t[i]
-}
-
-func (t taskAssignList) Less(i, j int) bool {
-	return len(t[i].Tasks) > len(t[j].Tasks)
-}
-
-func (t taskAssignList) GetAssigneeList(userMap map[string]string) []string {
-	l := []string{}
-	for _, v := range t {
-		l = append(l, getValueWithMap(v.Assignee, userMap))
-	}
-	return l
-}
-
-func issueMain(c *cli.Context, conf *config) error {
-
-	cli := ghIssueClient{}
-	cli.SetConf(conf)
-
-	issues, err := getIssues(&cli)
+	issues, err := i.getAllIssues(client, *conf.User, *conf.Repo)
 	if err != nil {
 		return err
 	}
 
 	exceptLabels := []string{}
 	if c.Bool("except") {
-		exceptLabels = conf.LabelConditions.Pendings
+		exceptLabels = conf.getLabel("Low")
 	}
 
-	iInfo, err := createTaskTable(issues, conf.LabelConditions.Urgents, exceptLabels)
+	iInfo, err := i.createTaskTable(issues, conf.getLabel("High"), exceptLabels)
 	if err != nil {
 		return err
 	}
 
-	fmt.Print(getResultStr(iInfo, conf.Repo, conf.Message, exceptLabels, conf.UserMappings))
+	fmt.Fprint(i.Out, i.getResultStr(iInfo, *conf.User, *conf.Repo, *conf.Message, exceptLabels, conf.UserMappings))
 
 	return nil
 }
 
-func getIssues(cli ghIssueClientI) ([]ghIssue, error) {
+func (i *issue) getAllIssues(client *github.Client, user, repo string) ([]*github.Issue, error) {
 
-	cli.AddValue("state", "open")
-	cli.AddValue("per_page", "100")
+	opt := &github.IssueListByRepoOptions{
+		State:     "open",
+		Sort:      "created",
+		Direction: "asc",
+		ListOptions: github.ListOptions{
+			Page:    1,
+			PerPage: 100,
+		},
+	}
 
-	issues := []ghIssue{}
-	for i := 1; i < 100; i++ {
-		cli.AddValue("page", strconv.Itoa(i))
-		tmpIssues, err := cli.GetIssues()
+	var allIssues []*github.Issue
+	for {
+		issues, resp, err := client.Issues.ListByRepo(context.Background(), user, repo, opt)
 		if err != nil {
 			return nil, err
 		}
-		if len(tmpIssues) <= 0 {
+		allIssues = append(allIssues, issues...)
+		if resp.NextPage == 0 {
 			break
 		}
-		issues = append(issues, tmpIssues...)
+		opt.Page = resp.NextPage
 	}
 
-	return issues, nil
+	return allIssues, nil
 }
 
-func createTaskTable(issues []ghIssue, urgentLabels, exceptLabels []string) (issueInfo, error) {
+func (i *issue) createTaskTable(issues []*github.Issue, urgentLabels, exceptLabels []string) (issueInfo, error) {
 
 	taskMap := make(map[string][]int)
 	urgents := []int{}
@@ -119,7 +96,7 @@ ISSUE_LOOP:
 	for _, issue := range issues {
 		if len(exceptLabels) > 0 {
 			for _, label := range issue.Labels {
-				if existStr(exceptLabels, label.Name) {
+				if existStr(exceptLabels, *label.Name) {
 					continue ISSUE_LOOP
 				}
 			}
@@ -127,22 +104,22 @@ ISSUE_LOOP:
 		taskCount++
 		if len(urgentLabels) > 0 {
 			for _, label := range issue.Labels {
-				if existStr(urgentLabels, label.Name) {
-					urgents = append(urgents, issue.Number)
+				if existStr(urgentLabels, *label.Name) {
+					urgents = append(urgents, *issue.Number)
 					break
 				}
 			}
 		}
 		if len(issue.Assignees) > 0 {
 			for _, user := range issue.Assignees {
-				if _, ok := taskMap[user.Name]; ok {
-					taskMap[user.Name] = append(taskMap[user.Name], issue.Number)
+				if _, ok := taskMap[*user.Login]; ok {
+					taskMap[*user.Login] = append(taskMap[*user.Login], *issue.Number)
 				} else {
-					taskMap[user.Name] = []int{issue.Number}
+					taskMap[*user.Login] = []int{*issue.Number}
 				}
 			}
 		} else {
-			noAssignees = append(noAssignees, issue.Number)
+			noAssignees = append(noAssignees, *issue.Number)
 		}
 	}
 
@@ -164,7 +141,7 @@ ISSUE_LOOP:
 	}, nil
 }
 
-func getResultStr(iInfo issueInfo, repo, message *string,
+func (i *issue) getResultStr(iInfo issueInfo, user, repo, message string,
 	exceptLabels []string, userMap map[string]string) string {
 
 	// prepare
@@ -180,7 +157,7 @@ func getResultStr(iInfo issueInfo, repo, message *string,
 
 	// output
 	var rstStr string
-	rstStr += fmt.Sprintf("# Issue & PR List for `%s`\n", *repo)
+	rstStr += fmt.Sprintf("# Issue & PR List for `%s/%s`\n", user, repo)
 
 	rstStr += fmt.Sprintf("\ttask count: %d\n", iInfo.TaskCount)
 	rstStr += fmt.Sprintf("\turgent: %s\n", nvl(concatInt(iInfo.Urgents, ", ")))
@@ -189,22 +166,56 @@ func getResultStr(iInfo issueInfo, repo, message *string,
 	}
 	rstStr += "\n```\n"
 	for _, t := range iInfo.TaskTable {
-		rstStr += createOneLine(getValueWithMap(t.Assignee, userMap), t.Tasks, iInfo, &maxLength)
+		rstStr += i.createOneLine(getValueWithMap(t.Assignee, userMap), t.Tasks, iInfo, &maxLength)
 	}
 
 	if len(iInfo.NoAssignees) > 0 {
-		rstStr += createOneLine(noAssigneesLabel, iInfo.NoAssignees, iInfo, &maxLength)
+		rstStr += i.createOneLine(noAssigneesLabel, iInfo.NoAssignees, iInfo, &maxLength)
 	}
 	rstStr += "```\n"
 
 	rstStr += fmt.Sprintf("\n%s\n", concatStrWith2Brackets(iInfo.TaskTable.GetAssigneeList(userMap), ", ", "@", ""))
-	if message != nil {
-		rstStr += fmt.Sprintln(*message)
+	if message != "" {
+		rstStr += fmt.Sprintln(message)
 	}
 
 	return rstStr
 }
 
-func createOneLine(name string, tasks []int, iInfo issueInfo, maxLength *int) string {
+func (i *issue) createOneLine(name string, tasks []int, iInfo issueInfo, maxLength *int) string {
 	return fmt.Sprintf("- %s%s (%d): %s\n", name, space(*maxLength-len(name)), len(tasks), concatInt(tasks, ", "))
+}
+
+type taskAssign struct {
+	Assignee string
+	Tasks    []int
+}
+
+type taskAssignList []taskAssign
+
+func (t taskAssignList) Len() int {
+	return len(t)
+}
+
+func (t taskAssignList) Swap(i, j int) {
+	t[i], t[j] = t[j], t[i]
+}
+
+func (t taskAssignList) Less(i, j int) bool {
+	return len(t[i].Tasks) > len(t[j].Tasks)
+}
+
+type issueInfo struct {
+	TaskTable   taskAssignList
+	Urgents     []int
+	NoAssignees []int
+	TaskCount   int
+}
+
+func (t taskAssignList) GetAssigneeList(userMap map[string]string) []string {
+	l := []string{}
+	for _, v := range t {
+		l = append(l, getValueWithMap(v.Assignee, userMap))
+	}
+	return l
 }

@@ -2,17 +2,13 @@
 
 This is a CLI tool to help you to manage your projects with GitHub.
 
-* [Overview](#overview)
-* [Config File](#config-file)
-* [Option](#option)
-
 ## Overview
 
 * `issue`: you can output task list for each assignees.
 
 ```text
 $ ./githubmgr issue
-# Issue & PR List for `test-repository`
+# Issue & PR List for `test-user/test-repository`
     task count: 7
     urgent: 10, 12
 
@@ -33,22 +29,27 @@ Please store the `config.json` file in the same directory as this tool. You can 
 
 ```json:config.json
 {
-    "username": "default username",
-    "repository": "default repository name",
-    "access_token": "valid access token (if your repository is private, mandatory)",
+    "username": "default_username",
+    "repository": "default_repository_name",
+    "access_token": "valid_access_token",
     "message_to_assignee": "Please check the assigned issues.",
-    "label_conditions": {
-        "urgents": [
-            "urgent"
+    "label_rule" : {
+        "priority": [
+            {"label_name": "urgent", "level":"High"},
+            {"label_name": "critical", "level":"High"},
+            {"label_name": "major", "level":"Middle"},
+            {"label_name": "minor", "level":"Middle"},
+            {"label_name": "pending", "level":"Low"}
         ],
-        "pendings": [
-            "pending"
+        "other": [
+            {"label_name": "bug", "level":"High"},
+            {"label_name": "wontfix", "level":"Low"}
         ]
     },
     "user_mappings": [
         {
-            "github_name": "github name",
-            "slack_name": "slack name"
+            "github_name": "github_name",
+            "slack_name": "slack_name"
         }
     ]
 }
