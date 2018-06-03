@@ -47,14 +47,9 @@ func (i issue) Run(c *cli.Context, conf *config, client *github.Client) error {
 		exceptLabels = conf.getLabel("Low")
 	}
 
-	iInfo, err := i.createIssueInfo(issues, conf.getLabel("High"), exceptLabels)
-	if err != nil {
-		return err
-	}
+	iInfo := i.createIssueInfo(issues, conf.getLabel("High"), exceptLabels)
 
-	if i.Out != nil {
-		fmt.Fprint(i.Out, i.getResultStr(iInfo, *conf.User, *conf.Repo, *conf.Message, exceptLabels, conf.UserMappings))
-	}
+	i.outputResult(iInfo, *conf.User, *conf.Repo, *conf.Message, exceptLabels, conf.UserMappings)
 
 	return nil
 }
@@ -87,7 +82,7 @@ func (i issue) getAllIssues(client *github.Client, user, repo string) ([]*github
 	return allIssues, nil
 }
 
-func (i issue) createIssueInfo(baseIssues []*github.Issue, highLabels, exceptLabels []string) (issueInfo, error) {
+func (i issue) createIssueInfo(baseIssues []*github.Issue, highLabels, exceptLabels []string) issueInfo {
 
 	assigneeIssueMap := make(map[string][]int)
 	assignees := []string{}
@@ -147,11 +142,15 @@ ISSUE_LOOP:
 		HighIssues:       highIssues,
 		NoAssigneeIssues: noAssigneeIssues,
 		ExceptIssueCnt:   exceptIssueCnt,
-	}, nil
+	}
 }
 
-func (i issue) getResultStr(iInfo issueInfo, user, repo, message string,
-	exceptLabels []string, userMap userMappings) string {
+func (i issue) outputResult(iInfo issueInfo, user, repo, message string,
+	exceptLabels []string, userMap userMappings) {
+
+	if i.Out == nil {
+		return
+	}
 
 	// prepare
 	maxLength := 0
@@ -165,32 +164,27 @@ func (i issue) getResultStr(iInfo issueInfo, user, repo, message string,
 	}
 
 	// output
-	var rstStr string
-	rstStr += fmt.Sprintf("# Issue & PR List for `%s/%s`\n", user, repo)
+	fmt.Fprintf(i.Out, "# Issue & PR List for `%s/%s`\n", user, repo)
 
-	rstStr += fmt.Sprintf("\ttask count: %d\n", len(iInfo.BaseIssues)-iInfo.ExceptIssueCnt)
-	rstStr += fmt.Sprintf("\turgent: %s\n", nvl(concatInt(iInfo.HighIssues, ", ")))
+	fmt.Fprintf(i.Out, "\ttask count: %d\n", len(iInfo.BaseIssues)-iInfo.ExceptIssueCnt)
+	fmt.Fprintf(i.Out, "\turgent: %s\n", nvl(concatInt(iInfo.HighIssues, ", ")))
 	if len(exceptLabels) > 0 {
-		rstStr += fmt.Sprintf("\texcepts labels: %s\n", nvl(concatStrWithBracket(exceptLabels, ", ", "`")))
+		fmt.Fprintf(i.Out, "\texcepts labels: %s\n", nvl(concatStrWithBracket(exceptLabels, ", ", "`")))
 	}
-	rstStr += "\n```\n"
+	fmt.Fprintln(i.Out, "\n```")
 	for _, v := range iInfo.AssigneeRanking {
-		rstStr += i.createOneLine(userMap.getValue(v), iInfo.AssigneeIssues[v], &maxLength)
-		// rstStr += i.createOneLine(v, iInfo.AssigneeIssues[v], &maxLength)
+		fmt.Fprint(i.Out, i.createOneLine(userMap.getValue(v), iInfo.AssigneeIssues[v], &maxLength))
 	}
 
 	if len(iInfo.NoAssigneeIssues) > 0 {
-		rstStr += i.createOneLine(noAssigneesLabel, iInfo.NoAssigneeIssues, &maxLength)
+		fmt.Fprint(i.Out, i.createOneLine(noAssigneesLabel, iInfo.NoAssigneeIssues, &maxLength))
 	}
-	rstStr += "```\n"
+	fmt.Fprintln(i.Out, "```")
 
-	rstStr += fmt.Sprintf("\n%s\n", concatStrWith2Brackets(userMap.getValues(iInfo.AssigneeRanking), ", ", "@", ""))
-	// rstStr += fmt.Sprintf("\n%s\n", concatStrWith2Brackets(iInfo.AssigneeRanking, ", ", "@", ""))
+	fmt.Fprintf(i.Out, "\n%s\n", concatStrWith2Brackets(userMap.getValues(iInfo.AssigneeRanking), ", ", "@", ""))
 	if message != "" {
-		rstStr += fmt.Sprintln(message)
+		fmt.Fprintln(i.Out, message)
 	}
-
-	return rstStr
 }
 
 func (i issue) createOneLine(name string, tasks []int, maxLength *int) string {
