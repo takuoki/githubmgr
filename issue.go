@@ -35,7 +35,7 @@ type issue struct {
 	Out io.Writer
 }
 
-func (i *issue) Run(c *cli.Context, conf *config, client *github.Client) error {
+func (i issue) Run(c *cli.Context, conf *config, client *github.Client) error {
 
 	issues, err := i.getAllIssues(client, *conf.User, *conf.Repo)
 	if err != nil {
@@ -52,12 +52,14 @@ func (i *issue) Run(c *cli.Context, conf *config, client *github.Client) error {
 		return err
 	}
 
-	fmt.Fprint(i.Out, i.getResultStr(iInfo, *conf.User, *conf.Repo, *conf.Message, exceptLabels, conf.UserMappings))
+	if i.Out != nil {
+		fmt.Fprint(i.Out, i.getResultStr(iInfo, *conf.User, *conf.Repo, *conf.Message, exceptLabels, conf.UserMappings))
+	}
 
 	return nil
 }
 
-func (i *issue) getAllIssues(client *github.Client, user, repo string) ([]*github.Issue, error) {
+func (i issue) getAllIssues(client *github.Client, user, repo string) ([]*github.Issue, error) {
 
 	opt := &github.IssueListByRepoOptions{
 		State:     "open",
@@ -85,7 +87,7 @@ func (i *issue) getAllIssues(client *github.Client, user, repo string) ([]*githu
 	return allIssues, nil
 }
 
-func (i *issue) createTaskTable(issues []*github.Issue, urgentLabels, exceptLabels []string) (issueInfo, error) {
+func (i issue) createTaskTable(issues []*github.Issue, urgentLabels, exceptLabels []string) (issueInfo, error) {
 
 	taskMap := make(map[string][]int)
 	urgents := []int{}
@@ -141,7 +143,7 @@ ISSUE_LOOP:
 	}, nil
 }
 
-func (i *issue) getResultStr(iInfo issueInfo, user, repo, message string,
+func (i issue) getResultStr(iInfo issueInfo, user, repo, message string,
 	exceptLabels []string, userMap map[string]string) string {
 
 	// prepare
@@ -182,7 +184,7 @@ func (i *issue) getResultStr(iInfo issueInfo, user, repo, message string,
 	return rstStr
 }
 
-func (i *issue) createOneLine(name string, tasks []int, iInfo issueInfo, maxLength *int) string {
+func (i issue) createOneLine(name string, tasks []int, iInfo issueInfo, maxLength *int) string {
 	return fmt.Sprintf("- %s%s (%d): %s\n", name, space(*maxLength-len(name)), len(tasks), concatInt(tasks, ", "))
 }
 
