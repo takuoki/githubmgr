@@ -47,7 +47,7 @@ func (i issue) Run(c *cli.Context, conf *config, client *github.Client) error {
 		exceptLabels = conf.getLabel("Low")
 	}
 
-	iInfo, err := i.createTaskTable(issues, conf.getLabel("High"), exceptLabels)
+	iInfo, err := i.createIssueInfo(issues, conf.getLabel("High"), exceptLabels)
 	if err != nil {
 		return err
 	}
@@ -87,73 +87,80 @@ func (i issue) getAllIssues(client *github.Client, user, repo string) ([]*github
 	return allIssues, nil
 }
 
-func (i issue) createTaskTable(issues []*github.Issue, urgentLabels, exceptLabels []string) (issueInfo, error) {
+func (i issue) createIssueInfo(baseIssues []*github.Issue, highLabels, exceptLabels []string) (issueInfo, error) {
 
-	taskMap := make(map[string][]int)
-	urgents := []int{}
-	noAssignees := []int{}
-	taskCount := 0
+	assigneeIssueMap := make(map[string][]int)
+	assignees := []string{}
+	highIssues := []int{}
+	noAssigneeIssues := []int{}
+	exceptIssueCnt := 0
 
 ISSUE_LOOP:
-	for _, issue := range issues {
+	for _, issue := range baseIssues {
+
+		// check except or not
 		if len(exceptLabels) > 0 {
 			for _, label := range issue.Labels {
 				if existStr(exceptLabels, *label.Name) {
+					exceptIssueCnt++
 					continue ISSUE_LOOP
 				}
 			}
 		}
-		taskCount++
-		if len(urgentLabels) > 0 {
+
+		// set assigneeIssueMap and assignees
+		if len(issue.Assignees) > 0 {
+			for _, user := range issue.Assignees {
+				if _, ok := assigneeIssueMap[*user.Login]; ok {
+					assigneeIssueMap[*user.Login] = append(assigneeIssueMap[*user.Login], *issue.Number)
+				} else {
+					assigneeIssueMap[*user.Login] = []int{*issue.Number}
+					assignees = append(assignees, *user.Login)
+				}
+			}
+		} else {
+			noAssigneeIssues = append(noAssigneeIssues, *issue.Number)
+		}
+
+		// set highIssues
+		if len(highLabels) > 0 {
 			for _, label := range issue.Labels {
-				if existStr(urgentLabels, *label.Name) {
-					urgents = append(urgents, *issue.Number)
+				if existStr(highLabels, *label.Name) {
+					highIssues = append(highIssues, *issue.Number)
 					break
 				}
 			}
 		}
-		if len(issue.Assignees) > 0 {
-			for _, user := range issue.Assignees {
-				if _, ok := taskMap[*user.Login]; ok {
-					taskMap[*user.Login] = append(taskMap[*user.Login], *issue.Number)
-				} else {
-					taskMap[*user.Login] = []int{*issue.Number}
-				}
-			}
-		} else {
-			noAssignees = append(noAssignees, *issue.Number)
-		}
 	}
 
 	// sort
-	sort.Ints(urgents)
-	sort.Ints(noAssignees)
-	var taskTable taskAssignList = []taskAssign{}
-	for k, v := range taskMap {
-		sort.Ints(v)
-		taskTable = append(taskTable, taskAssign{Assignee: k, Tasks: v})
-	}
-	sort.Sort(taskTable)
+	sort.Slice(assignees, func(i, j int) bool {
+		return len(assigneeIssueMap[assignees[j]]) < len(assigneeIssueMap[assignees[i]])
+	})
+	sort.Ints(highIssues)
+	sort.Ints(noAssigneeIssues)
 
 	return issueInfo{
-		TaskTable:   taskTable,
-		Urgents:     urgents,
-		NoAssignees: noAssignees,
-		TaskCount:   taskCount,
+		BaseIssues:       baseIssues,
+		AssigneeIssues:   assigneeIssueMap,
+		AssigneeRanking:  assignees,
+		HighIssues:       highIssues,
+		NoAssigneeIssues: noAssigneeIssues,
+		ExceptIssueCnt:   exceptIssueCnt,
 	}, nil
 }
 
 func (i issue) getResultStr(iInfo issueInfo, user, repo, message string,
-	exceptLabels []string, userMap map[string]string) string {
+	exceptLabels []string, userMap userMappings) string {
 
 	// prepare
 	maxLength := 0
-	if len(iInfo.NoAssignees) > 0 {
+	if len(iInfo.NoAssigneeIssues) > 0 {
 		maxLength = len(noAssigneesLabel)
 	}
-	for _, t := range iInfo.TaskTable {
-		if maxLength < len(t.Assignee) {
-			maxLength = len(t.Assignee)
+	for _, v := range iInfo.AssigneeRanking {
+		if maxLength < len(v) {
+			maxLength = len(v)
 		}
 	}
 
@@ -161,22 +168,24 @@ func (i issue) getResultStr(iInfo issueInfo, user, repo, message string,
 	var rstStr string
 	rstStr += fmt.Sprintf("# Issue & PR List for `%s/%s`\n", user, repo)
 
-	rstStr += fmt.Sprintf("\ttask count: %d\n", iInfo.TaskCount)
-	rstStr += fmt.Sprintf("\turgent: %s\n", nvl(concatInt(iInfo.Urgents, ", ")))
+	rstStr += fmt.Sprintf("\ttask count: %d\n", len(iInfo.BaseIssues)-iInfo.ExceptIssueCnt)
+	rstStr += fmt.Sprintf("\turgent: %s\n", nvl(concatInt(iInfo.HighIssues, ", ")))
 	if len(exceptLabels) > 0 {
 		rstStr += fmt.Sprintf("\texcepts labels: %s\n", nvl(concatStrWithBracket(exceptLabels, ", ", "`")))
 	}
 	rstStr += "\n```\n"
-	for _, t := range iInfo.TaskTable {
-		rstStr += i.createOneLine(getValueWithMap(t.Assignee, userMap), t.Tasks, iInfo, &maxLength)
+	for _, v := range iInfo.AssigneeRanking {
+		rstStr += i.createOneLine(userMap.getValue(v), iInfo.AssigneeIssues[v], &maxLength)
+		// rstStr += i.createOneLine(v, iInfo.AssigneeIssues[v], &maxLength)
 	}
 
-	if len(iInfo.NoAssignees) > 0 {
-		rstStr += i.createOneLine(noAssigneesLabel, iInfo.NoAssignees, iInfo, &maxLength)
+	if len(iInfo.NoAssigneeIssues) > 0 {
+		rstStr += i.createOneLine(noAssigneesLabel, iInfo.NoAssigneeIssues, &maxLength)
 	}
 	rstStr += "```\n"
 
-	rstStr += fmt.Sprintf("\n%s\n", concatStrWith2Brackets(iInfo.TaskTable.GetAssigneeList(userMap), ", ", "@", ""))
+	rstStr += fmt.Sprintf("\n%s\n", concatStrWith2Brackets(userMap.getValues(iInfo.AssigneeRanking), ", ", "@", ""))
+	// rstStr += fmt.Sprintf("\n%s\n", concatStrWith2Brackets(iInfo.AssigneeRanking, ", ", "@", ""))
 	if message != "" {
 		rstStr += fmt.Sprintln(message)
 	}
@@ -184,40 +193,15 @@ func (i issue) getResultStr(iInfo issueInfo, user, repo, message string,
 	return rstStr
 }
 
-func (i issue) createOneLine(name string, tasks []int, iInfo issueInfo, maxLength *int) string {
+func (i issue) createOneLine(name string, tasks []int, maxLength *int) string {
 	return fmt.Sprintf("- %s%s (%d): %s\n", name, space(*maxLength-len(name)), len(tasks), concatInt(tasks, ", "))
 }
 
-type taskAssign struct {
-	Assignee string
-	Tasks    []int
-}
-
-type taskAssignList []taskAssign
-
-func (t taskAssignList) Len() int {
-	return len(t)
-}
-
-func (t taskAssignList) Swap(i, j int) {
-	t[i], t[j] = t[j], t[i]
-}
-
-func (t taskAssignList) Less(i, j int) bool {
-	return len(t[i].Tasks) > len(t[j].Tasks)
-}
-
 type issueInfo struct {
-	TaskTable   taskAssignList
-	Urgents     []int
-	NoAssignees []int
-	TaskCount   int
-}
-
-func (t taskAssignList) GetAssigneeList(userMap map[string]string) []string {
-	l := []string{}
-	for _, v := range t {
-		l = append(l, getValueWithMap(v.Assignee, userMap))
-	}
-	return l
+	BaseIssues       []*github.Issue
+	AssigneeIssues   map[string][]int
+	AssigneeRanking  []string
+	HighIssues       []int
+	NoAssigneeIssues []int
+	ExceptIssueCnt   int
 }

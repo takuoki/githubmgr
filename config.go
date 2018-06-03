@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"io/ioutil"
+	"reflect"
 
 	"github.com/urfave/cli"
 )
@@ -29,7 +30,44 @@ type config struct {
 		GithubName *string `json:"github_name"`
 		SlackName  *string `json:"slack_name"`
 	} `json:"user_mappings"`
-	UserMappings map[string]string
+	UserMappings userMappings
+}
+
+func (c *config) getLabel(level string) []string {
+	labels := []string{}
+	for _, v := range c.LabelRule.Priority {
+		if *v.Level == level {
+			labels = append(labels, *v.LabelName)
+		}
+	}
+	for _, v := range c.LabelRule.Other {
+		if *v.Level == level {
+			labels = append(labels, *v.LabelName)
+		}
+	}
+	return labels
+}
+
+type userMappings map[string]string
+
+func (u *userMappings) getValue(key string) string {
+	if u == nil {
+		return key
+	}
+	m := reflect.ValueOf(u).Elem()
+	v := m.MapIndex(reflect.ValueOf(key))
+	if v == (reflect.Value{}) {
+		return key
+	}
+	return v.String()
+}
+
+func (u *userMappings) getValues(keys []string) []string {
+	values := []string{}
+	for _, k := range keys {
+		values = append(values, u.getValue(k))
+	}
+	return values
 }
 
 func readConfig(c *cli.Context) (*config, error) {
@@ -75,19 +113,4 @@ func readConfig(c *cli.Context) (*config, error) {
 	}
 
 	return conf, nil
-}
-
-func (c *config) getLabel(level string) []string {
-	labels := []string{}
-	for _, v := range c.LabelRule.Priority {
-		if *v.Level == level {
-			labels = append(labels, *v.LabelName)
-		}
-	}
-	for _, v := range c.LabelRule.Other {
-		if *v.Level == level {
-			labels = append(labels, *v.LabelName)
-		}
-	}
-	return labels
 }
