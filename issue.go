@@ -254,8 +254,11 @@ func (i issue) assigneeLine(name string, issues []int, maxLen int) string {
 func (i issue) priorityLines(issues []int, maxLen int, issueAssignees map[int][]string, userMap userMappings) string {
 	str := ""
 	for _, v := range issues {
-		assignees := userMap.getValues(issueAssignees[v])
-		str += fmt.Sprintf("  - %d%s: %s\n", v, space(maxLen-len(strconv.Itoa(v))), concatStr(assignees, ", "))
+		assignees := concatStr(userMap.getValues(issueAssignees[v]), ", ")
+		if assignees == "" {
+			assignees = noAssigneesLabel
+		}
+		str += fmt.Sprintf("  - %d%s: %s\n", v, space(maxLen-len(strconv.Itoa(v))), assignees)
 	}
 
 	return str
