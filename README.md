@@ -4,7 +4,9 @@ This is a CLI tool to help you to manage your projects with GitHub.
 
 ## Overview
 
-* `issue`: you can output task list for each assignees.
+### issue
+
+you can output task list for each assignees.
 
 ```text
 $ ./githubmgr issue
@@ -12,11 +14,28 @@ $ ./githubmgr issue
     task count: 7
     urgent: 10, 12
 
+    *Assingee List*
     ```
     - member-a       (3): 10, 13, 15
     - member-b       (2): 12, 15
     - member-c       (1): 9
     - (No Assignees) (2): 16, 17
+    ```
+
+    *Priority List*
+    ```
+    - urgent
+      - 10: member-a
+      - 12: member-b
+    - major
+      - 9 : member-c
+      - 15: member-a, member-b
+    - minor
+      - 16: (No Assignees)
+    - pending
+      - 13: member-a
+    - (No Priority Labels)
+      - 17: (No Assignees)
     ```
 
 @member-a, @member-b, @member-c
