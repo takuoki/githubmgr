@@ -33,15 +33,25 @@ type config struct {
 	UserMappings userMappings
 }
 
-func (c *config) getLabel(level string) []string {
+func (c *config) getPriorityLabels(level string) []string {
 	labels := []string{}
 	for _, v := range c.LabelRule.Priority {
-		if *v.Level == level {
+		if level == "" || *v.Level == level {
+			labels = append(labels, *v.LabelName)
+		}
+	}
+	return labels
+}
+
+func (c *config) getLabels(level string) []string {
+	labels := []string{}
+	for _, v := range c.LabelRule.Priority {
+		if level == "" || *v.Level == level {
 			labels = append(labels, *v.LabelName)
 		}
 	}
 	for _, v := range c.LabelRule.Other {
-		if *v.Level == level {
+		if level == "" || *v.Level == level {
 			labels = append(labels, *v.LabelName)
 		}
 	}

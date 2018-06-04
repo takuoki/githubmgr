@@ -6,6 +6,7 @@ import (
 	"io"
 	"os"
 	"sort"
+	"strconv"
 
 	"github.com/google/go-github/github"
 	"github.com/urfave/cli"
@@ -13,6 +14,7 @@ import (
 
 const (
 	noAssigneesLabel = "(No Assignees)"
+	noPriorityLabel  = "(No Priority Labels)"
 )
 
 func init() {
@@ -26,6 +28,10 @@ func init() {
 			cli.BoolFlag{
 				Name:  "except, e",
 				Usage: "except issues attached low level labels",
+			},
+			cli.BoolFlag{
+				Name:  "priority, p",
+				Usage: "output priority list at the same time",
 			},
 		},
 	})
@@ -44,12 +50,16 @@ func (i issue) Run(c *cli.Context, conf *config, client *github.Client) error {
 
 	exceptLabels := []string{}
 	if c.Bool("except") {
-		exceptLabels = conf.getLabel("Low")
+		exceptLabels = conf.getLabels("Low")
+	}
+	priorityLabels := []string{}
+	if c.Bool("priority") {
+		priorityLabels = conf.getPriorityLabels("")
 	}
 
-	iInfo := i.createIssueInfo(issues, conf.getLabel("High"), exceptLabels)
+	iInfo := i.createIssueInfo(issues, conf.getLabels("High"), exceptLabels, priorityLabels)
 
-	i.outputResult(iInfo, *conf.User, *conf.Repo, *conf.Message, exceptLabels, conf.UserMappings)
+	i.outputResult(iInfo, *conf.User, *conf.Repo, *conf.Message, exceptLabels, priorityLabels, conf.UserMappings)
 
 	return nil
 }
@@ -82,12 +92,13 @@ func (i issue) getAllIssues(client *github.Client, user, repo string) ([]*github
 	return allIssues, nil
 }
 
-func (i issue) createIssueInfo(baseIssues []*github.Issue, highLabels, exceptLabels []string) issueInfo {
+func (i issue) createIssueInfo(baseIssues []*github.Issue, highLabels, exceptLabels, priorityLabels []string) issueInfo {
 
-	assigneeIssueMap := make(map[string][]int)
+	issueAssignees := make(map[int][]string)
+	assigneeIssues := make(map[string][]int)
 	assignees := []string{}
+	priorityIssues := make(map[string][]int)
 	highIssues := []int{}
-	noAssigneeIssues := []int{}
 	exceptIssueCnt := 0
 
 ISSUE_LOOP:
@@ -103,18 +114,46 @@ ISSUE_LOOP:
 			}
 		}
 
-		// set assigneeIssueMap and assignees
+		// set issueAssignees, assigneeIssues and assignees
+		issueAssignees[*issue.Number] = []string{}
 		if len(issue.Assignees) > 0 {
 			for _, user := range issue.Assignees {
-				if _, ok := assigneeIssueMap[*user.Login]; ok {
-					assigneeIssueMap[*user.Login] = append(assigneeIssueMap[*user.Login], *issue.Number)
+				issueAssignees[*issue.Number] = append(issueAssignees[*issue.Number], *user.Login)
+				if _, ok := assigneeIssues[*user.Login]; ok {
+					assigneeIssues[*user.Login] = append(assigneeIssues[*user.Login], *issue.Number)
 				} else {
-					assigneeIssueMap[*user.Login] = []int{*issue.Number}
+					assigneeIssues[*user.Login] = []int{*issue.Number}
 					assignees = append(assignees, *user.Login)
 				}
 			}
 		} else {
-			noAssigneeIssues = append(noAssigneeIssues, *issue.Number)
+			if _, ok := assigneeIssues[noAssigneesLabel]; ok {
+				assigneeIssues[noAssigneesLabel] = append(assigneeIssues[noAssigneesLabel], *issue.Number)
+			} else {
+				assigneeIssues[noAssigneesLabel] = []int{*issue.Number}
+			}
+		}
+
+		// set priorityIssues
+		existPriority := false
+		if len(priorityLabels) > 0 {
+			for _, label := range issue.Labels {
+				if existStr(priorityLabels, *label.Name) {
+					if _, ok := priorityIssues[*label.Name]; ok {
+						priorityIssues[*label.Name] = append(priorityIssues[*label.Name], *issue.Number)
+					} else {
+						priorityIssues[*label.Name] = []int{*issue.Number}
+					}
+					existPriority = true
+				}
+			}
+			if !existPriority {
+				if _, ok := priorityIssues[noPriorityLabel]; ok {
+					priorityIssues[noPriorityLabel] = append(priorityIssues[noPriorityLabel], *issue.Number)
+				} else {
+					priorityIssues[noPriorityLabel] = []int{*issue.Number}
+				}
+			}
 		}
 
 		// set highIssues
@@ -130,38 +169,40 @@ ISSUE_LOOP:
 
 	// sort
 	sort.Slice(assignees, func(i, j int) bool {
-		return len(assigneeIssueMap[assignees[j]]) < len(assigneeIssueMap[assignees[i]])
+		return len(assigneeIssues[assignees[j]]) < len(assigneeIssues[assignees[i]])
 	})
 	sort.Ints(highIssues)
-	sort.Ints(noAssigneeIssues)
 
 	return issueInfo{
-		BaseIssues:       baseIssues,
-		AssigneeIssues:   assigneeIssueMap,
-		AssigneeRanking:  assignees,
-		HighIssues:       highIssues,
-		NoAssigneeIssues: noAssigneeIssues,
-		ExceptIssueCnt:   exceptIssueCnt,
+		BaseIssues:      baseIssues,
+		IssueAssignees:  issueAssignees,
+		AssigneeIssues:  assigneeIssues,
+		AssigneeRanking: assignees,
+		PriorityIssues:  priorityIssues,
+		HighIssues:      highIssues,
+		ExceptIssueCnt:  exceptIssueCnt,
 	}
 }
 
 func (i issue) outputResult(iInfo issueInfo, user, repo, message string,
-	exceptLabels []string, userMap userMappings) {
+	exceptLabels, priorityLabels []string, userMap userMappings) {
 
 	if i.Out == nil {
 		return
 	}
 
 	// prepare
-	maxLength := 0
-	if len(iInfo.NoAssigneeIssues) > 0 {
-		maxLength = len(noAssigneesLabel)
+	maxAssigneeLen := 0
+	if _, ok := iInfo.AssigneeIssues[noAssigneesLabel]; ok {
+		maxAssigneeLen = len(noAssigneesLabel)
 	}
 	for _, v := range iInfo.AssigneeRanking {
-		if maxLength < len(v) {
-			maxLength = len(v)
+		if maxAssigneeLen < len(v) {
+			maxAssigneeLen = len(v)
 		}
 	}
+
+	maxPriorityLen := len(strconv.Itoa(*iInfo.BaseIssues[len(iInfo.BaseIssues)-1].Number))
 
 	// output
 	fmt.Fprintf(i.Out, "# Issue & PR List for `%s/%s`\n", user, repo)
@@ -171,15 +212,34 @@ func (i issue) outputResult(iInfo issueInfo, user, repo, message string,
 	if len(exceptLabels) > 0 {
 		fmt.Fprintf(i.Out, "\texcepts labels: %s\n", nvl(concatStrWithBracket(exceptLabels, ", ", "`")))
 	}
-	fmt.Fprintln(i.Out, "\n```")
-	for _, v := range iInfo.AssigneeRanking {
-		fmt.Fprint(i.Out, i.createOneLine(userMap.getValue(v), iInfo.AssigneeIssues[v], &maxLength))
+	// Assingee List
+	if len(priorityLabels) > 0 {
+		fmt.Fprintln(i.Out, "\n*Assingee List*\n```")
 	}
-
-	if len(iInfo.NoAssigneeIssues) > 0 {
-		fmt.Fprint(i.Out, i.createOneLine(noAssigneesLabel, iInfo.NoAssigneeIssues, &maxLength))
+	for _, v := range iInfo.AssigneeRanking {
+		fmt.Fprint(i.Out, i.assigneeLine(userMap.getValue(v), iInfo.AssigneeIssues[v], maxAssigneeLen))
+	}
+	if _, ok := iInfo.AssigneeIssues[noAssigneesLabel]; ok {
+		fmt.Fprint(i.Out, i.assigneeLine(noAssigneesLabel, iInfo.AssigneeIssues[noAssigneesLabel], maxAssigneeLen))
 	}
 	fmt.Fprintln(i.Out, "```")
+
+	// Priority List
+	if len(priorityLabels) > 0 {
+		fmt.Fprintln(i.Out, "\n*Priority List*\n```")
+		for _, v := range priorityLabels {
+			if _, ok := iInfo.PriorityIssues[v]; !ok {
+				continue
+			}
+			fmt.Fprintf(i.Out, "- %s\n", v)
+			fmt.Fprint(i.Out, i.priorityLines(iInfo.PriorityIssues[v], maxPriorityLen, iInfo.IssueAssignees, userMap))
+		}
+		if _, ok := iInfo.PriorityIssues[noPriorityLabel]; ok {
+			fmt.Fprintf(i.Out, "- %s\n", noPriorityLabel)
+			fmt.Fprint(i.Out, i.priorityLines(iInfo.PriorityIssues[noPriorityLabel], maxPriorityLen, iInfo.IssueAssignees, userMap))
+		}
+		fmt.Fprintln(i.Out, "```")
+	}
 
 	fmt.Fprintf(i.Out, "\n%s\n", concatStrWith2Brackets(userMap.getValues(iInfo.AssigneeRanking), ", ", "@", ""))
 	if message != "" {
@@ -187,15 +247,26 @@ func (i issue) outputResult(iInfo issueInfo, user, repo, message string,
 	}
 }
 
-func (i issue) createOneLine(name string, tasks []int, maxLength *int) string {
-	return fmt.Sprintf("- %s%s (%d): %s\n", name, space(*maxLength-len(name)), len(tasks), concatInt(tasks, ", "))
+func (i issue) assigneeLine(name string, issues []int, maxLen int) string {
+	return fmt.Sprintf("- %s%s (%d): %s\n", name, space(maxLen-len(name)), len(issues), concatInt(issues, ", "))
+}
+
+func (i issue) priorityLines(issues []int, maxLen int, issueAssignees map[int][]string, userMap userMappings) string {
+	str := ""
+	for _, v := range issues {
+		assignees := userMap.getValues(issueAssignees[v])
+		str += fmt.Sprintf("  - %d%s: %s\n", v, space(maxLen-len(strconv.Itoa(v))), concatStr(assignees, ", "))
+	}
+
+	return str
 }
 
 type issueInfo struct {
-	BaseIssues       []*github.Issue
-	AssigneeIssues   map[string][]int
-	AssigneeRanking  []string
-	HighIssues       []int
-	NoAssigneeIssues []int
-	ExceptIssueCnt   int
+	BaseIssues      []*github.Issue
+	IssueAssignees  map[int][]string
+	AssigneeIssues  map[string][]int
+	AssigneeRanking []string
+	PriorityIssues  map[string][]int
+	HighIssues      []int
+	ExceptIssueCnt  int
 }
