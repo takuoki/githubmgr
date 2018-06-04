@@ -9,7 +9,7 @@ This is a CLI tool to help you to manage your projects with GitHub.
 you can output task list for each assignees.
 
 ```text
-$ ./githubmgr issue
+$ ./githubmgr issue -p
 # Issue & PR List for `test-user/test-repository`
     task count: 7
     urgent: 10, 12
