@@ -1,0 +1,18 @@
+{
+    "labels": [
+        {"name": "urgent", "color": "ff3000", "desc": "Priority is urgent"},
+        {"name": "critical", "color": "ff9305", "desc": "Priority is critical"},
+        {"name": "major", "color": "fbca04", "desc": "Priority is major"},
+        {"name": "minor", "color": "5ecc36", "desc": "Priority is minor"},
+        {"name": "pending", "color": "2d86ee", "desc": "Priority is pending"},
+        {"name": "bug", "color": "e03000", "desc": "Something isn't working"},
+        {"name": "duplicate", "color": "cfd3d7", "desc": "This issue or pull request already exists"}
+    ],
+    "replace": [
+        {"from": "wontfix", "to": "pending"}
+    ],
+    "ignore": [
+        "question",
+        "area/*"
+    ]
+}

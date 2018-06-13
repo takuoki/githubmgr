@@ -42,6 +42,67 @@ $ ./githubmgr issue -p
 Please check the assigned issues.
 ```
 
+### label
+
+you can set some labels at one time with json settings.
+
+```json
+{
+    "labels": [
+        {"name": "urgent", "color": "ff3000", "desc": "Priority is urgent"},
+        {"name": "critical", "color": "ff9305", "desc": "Priority is critical"},
+        {"name": "major", "color": "fbca04", "desc": "Priority is major"},
+        {"name": "minor", "color": "5ecc36", "desc": "Priority is minor"},
+        {"name": "pending", "color": "2d86ee", "desc": "Priority is pending"},
+        {"name": "bug", "color": "e03000", "desc": "Something isn't working"},
+        {"name": "duplicate", "color": "cfd3d7", "desc": "This issue or pull request already exists"}
+    ],
+    "replace": [
+        {"from": "wontfix", "to": "pending"}
+    ],
+    "ignore": [
+        "question",
+        "area/*"
+    ]
+}
+```
+
+* `labels`: create or update these labels
+* `replace`: if `from` label exists and is attached to some issues or PRs, replace to `to` label
+* `ignore`: if these label exists, do nothing
+* if some other labels exists in your repository, these labels are deleted automatically.
+  but if these labels are attached to some issues or PRs, this tool return error
+
+```txt
+$ ./githubmgr label
+# Label settings for `test-user/test-repository`
+  * label settings
+    `urgent`: create (color="ff3000", desc="Priority is urgent")
+    `critical`: create (color="ff9305", desc="Priority is critical")
+    `major`: create (color="fbca04", desc="Priority is major")
+    `minor`: create (color="5ecc36", desc="Priority is minor")
+    `pending`: create (color="2d86ee", desc="Priority is pending")
+    `bug`: update (color="d73a4a" -> "2d86ee", desc="Something isn't working")
+    `duplicate`: update (color="cfd3d7" -> "cfd3d7", desc="This issue or pull request already exists")
+
+  * replace labels
+    `wontfix`: replace to `pending` (issues=10, 13)
+
+  * ignore labels
+    `question`
+    `area/abc`
+    `area/xyz`
+
+  * delete labels
+    `good first issue`
+    `help wanted`
+    `invalid`
+    `enhancement` (issues=14)
+
+  There is a label attached to issues in the delete labels.
+  Please dettatch it from issues or write a label definition.
+```
+
 ## Config File
 
 Please store the `config.json` file in the same directory as this tool. You can use any file name by specifying it with the command line option. Also, some properties in the config file can be specified on the command line.
