@@ -11,7 +11,7 @@ import (
 	"golang.org/x/oauth2"
 )
 
-const version = "0.1.2"
+const version = "0.2.0"
 
 type subCmd interface {
 	Run(*cli.Context, *config, *github.Client) error
