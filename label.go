@@ -62,7 +62,7 @@ func (l label) Run(c *cli.Context, conf *config, client *github.Client) error {
 		}{*v.Color, false}
 	}
 
-	// TODO select check or update
+	updOpes := []updOpe{}
 
 	// output
 	fmt.Fprintf(l.Out, "# Label settings for `%s/%s`\n", *conf.User, *conf.Repo)
@@ -72,8 +72,10 @@ func (l label) Run(c *cli.Context, conf *config, client *github.Client) error {
 		for _, v := range setting.Labels {
 			if cl, ok := currentLabelMap[v.Name]; ok {
 				cl.IsDefined = true
+				updOpes = append(updOpes, l.CreateUpdOpe(v.Name, opeUpd, v.Color, v.Desc, nil))
 				fmt.Fprintf(l.Out, "    `%s`: update (color=\"%s\" -> \"%s\", desc=\"%s\")\n", v.Name, cl.Color, v.Color, v.Desc)
 			} else {
+				updOpes = append(updOpes, l.CreateUpdOpe(v.Name, opeCrt, v.Color, v.Desc, nil))
 				fmt.Fprintf(l.Out, "    `%s`: create (color=\"%s\", desc=\"%s\")\n", v.Name, v.Color, v.Desc)
 			}
 		}
@@ -90,8 +92,11 @@ func (l label) Run(c *cli.Context, conf *config, client *github.Client) error {
 					return err
 				}
 				if len(issueNums) > 0 {
+					updOpes = append(updOpes, l.CreateUpdOpe(v.To, opeIss, "", "", issueNums))
+					updOpes = append(updOpes, l.CreateUpdOpe(v.From, opeDel, "", "", nil))
 					fmt.Fprintf(l.Out, "    `%s`: replace to `%s` (issues=%s) and delete\n", v.From, v.To, concatInt(issueNums, ", "))
 				} else {
+					updOpes = append(updOpes, l.CreateUpdOpe(v.From, opeDel, "", "", nil))
 					fmt.Fprintf(l.Out, "    `%s`: delete (there are no issues attatched this label)\n", v.From)
 				}
 			} else {
@@ -142,6 +147,7 @@ func (l label) Run(c *cli.Context, conf *config, client *github.Client) error {
 			existDelLabelWithIssue = true
 			fmt.Fprintf(l.Out, "    `%s` (issues=%s)\n", k, concatInt(issueNums, ", "))
 		} else {
+			updOpes = append(updOpes, l.CreateUpdOpe(k, opeDel, "", "", nil))
 			fmt.Fprintf(l.Out, "    `%s`\n", k)
 		}
 	}
@@ -153,6 +159,50 @@ func (l label) Run(c *cli.Context, conf *config, client *github.Client) error {
 	if existDelLabelWithIssue {
 		fmt.Fprintln(l.Out, "  There is a label attached to issues in the delete labels.")
 		fmt.Fprintln(l.Out, "  Please dettatch it from issues or write a label settings.")
+		return nil
+	}
+
+	if !c.Bool("update") {
+		return nil
+	}
+
+	fmt.Fprintln(l.Out, "  Update in progress...")
+	for _, uOpe := range updOpes {
+		// TODO github.Label doesn't have Description in v15.0.0, so don't set it...
+		switch uOpe.Operation {
+		case opeCrt:
+			_, _, err = client.Issues.CreateLabel(context.Background(), *conf.User, *conf.Repo, &github.Label{Name: &uOpe.Name, Color: &uOpe.Color})
+			if err != nil {
+				fmt.Fprintf(l.Out, "    `%s` -> %s fail (err=\"%s\")\n", uOpe.Name, uOpe.Operation, err.Error())
+			} else {
+				fmt.Fprintf(l.Out, "    `%s` -> %s success\n", uOpe.Name, uOpe.Operation)
+			}
+		case opeUpd:
+			_, _, err = client.Issues.EditLabel(context.Background(), *conf.User, *conf.Repo, uOpe.Name, &github.Label{Name: &uOpe.Name, Color: &uOpe.Color})
+			if err != nil {
+				fmt.Fprintf(l.Out, "    `%s` -> %s fail (err=\"%s\")\n", uOpe.Name, uOpe.Operation, err.Error())
+			} else {
+				fmt.Fprintf(l.Out, "    `%s` -> %s success\n", uOpe.Name, uOpe.Operation)
+			}
+		case opeDel:
+			_, err = client.Issues.DeleteLabel(context.Background(), *conf.User, *conf.Repo, uOpe.Name)
+			if err != nil {
+				fmt.Fprintf(l.Out, "    `%s` -> %s fail (err=\"%s\")\n", uOpe.Name, uOpe.Operation, err.Error())
+			} else {
+				fmt.Fprintf(l.Out, "    `%s` -> %s success\n", uOpe.Name, uOpe.Operation)
+			}
+		case opeIss:
+			for _, iNum := range uOpe.Issues {
+				_, _, err = client.Issues.AddLabelsToIssue(context.Background(), *conf.User, *conf.Repo, iNum, []string{uOpe.Name})
+				if err != nil {
+					fmt.Fprintf(l.Out, "    `%s` -> %s fail (issun num = %d) (err=\"%s\")\n", uOpe.Name, uOpe.Operation, iNum, err.Error())
+				} else {
+					fmt.Fprintf(l.Out, "    `%s` -> %s success (issun num = %d)\n", uOpe.Name, uOpe.Operation, iNum)
+				}
+			}
+		default:
+			panic(fmt.Sprintf("undefine operation string \"%s\"", uOpe.Operation))
+		}
 	}
 
 	return nil
@@ -253,4 +303,26 @@ func (l label) GetIssues(client *github.Client, user, repo, labelname string) ([
 	}
 
 	return issueNums, nil
+}
+
+type updOpe struct {
+	Name, Operation, Color, Desc string
+	Issues                       []int
+}
+
+const (
+	opeCrt = "create"
+	opeUpd = "update"
+	opeDel = "delete"
+	opeIss = "add issues"
+)
+
+func (l label) CreateUpdOpe(name, operation, color, desc string, issues []int) updOpe {
+	return updOpe{
+		Name:      name,
+		Operation: operation,
+		Color:     color,
+		Desc:      desc,
+		Issues:    issues,
+	}
 }
