@@ -85,8 +85,15 @@ func (l label) Run(c *cli.Context, conf *config, client *github.Client) error {
 		for _, v := range setting.Replace {
 			if cl, ok := currentLabelMap[v.From]; ok {
 				cl.IsDefined = true
-				// TODO check issue
-				fmt.Fprintf(l.Out, "    `%s`: replace to `%s`\n", v.From, v.To)
+				issueNums, err := l.GetIssues(client, *conf.User, *conf.Repo, v.From)
+				if err != nil {
+					return err
+				}
+				if len(issueNums) > 0 {
+					fmt.Fprintf(l.Out, "    `%s`: replace to `%s` (issues=%s) and delete\n", v.From, v.To, concatInt(issueNums, ", "))
+				} else {
+					fmt.Fprintf(l.Out, "    `%s`: delete (there are no issues attatched this label)\n", v.From)
+				}
 			} else {
 				fmt.Fprintf(l.Out, "    `%s`: don't exist in this repository\n", v.From)
 			}
@@ -120,16 +127,54 @@ func (l label) Run(c *cli.Context, conf *config, client *github.Client) error {
 	}
 
 	fmt.Fprintln(l.Out, "  * delete labels")
+	existDelLabel := false
+	existDelLabelWithIssue := false
 	for k, v := range currentLabelMap {
 		if v.IsDefined {
 			continue
 		}
-		// TODO check issue
-		fmt.Fprintf(l.Out, "    `%s`\n", k)
+		existDelLabel = true
+		issueNums, err := l.GetIssues(client, *conf.User, *conf.Repo, k)
+		if err != nil {
+			return err
+		}
+		if len(issueNums) > 0 {
+			existDelLabelWithIssue = true
+			fmt.Fprintf(l.Out, "    `%s` (issues=%s)\n", k, concatInt(issueNums, ", "))
+		} else {
+			fmt.Fprintf(l.Out, "    `%s`\n", k)
+		}
+	}
+	if !existDelLabel {
+		fmt.Fprintln(l.Out, "    don't delete any labels")
 	}
 	fmt.Fprintln(l.Out, "")
 
+	if existDelLabelWithIssue {
+		fmt.Fprintln(l.Out, "  There is a label attached to issues in the delete labels.")
+		fmt.Fprintln(l.Out, "  Please dettatch it from issues or write a label settings.")
+	}
+
 	return nil
+}
+
+type labelSetting struct {
+	Labels []struct {
+		Name  string `json:"name"`
+		Color string `json:"color"`
+		Desc  string `json:"desc"`
+	} `json:"labels"`
+	Replace []struct {
+		From string `json:"from"`
+		To   string `json:"to"`
+	} `json:"replace"`
+	Ignore   []string `json:"ignore"`
+	LabelMap map[string]labelItem
+}
+
+type labelItem struct {
+	Color, Desc, ReplaceTo string
+	IsIgnore               bool
 }
 
 func (l label) ReadSettings(filename string) (*labelSetting, error) {
@@ -179,21 +224,33 @@ func (l label) ReadSettings(filename string) (*labelSetting, error) {
 	return setting, nil
 }
 
-type labelSetting struct {
-	Labels []struct {
-		Name  string `json:"name"`
-		Color string `json:"color"`
-		Desc  string `json:"desc"`
-	} `json:"labels"`
-	Replace []struct {
-		From string `json:"from"`
-		To   string `json:"to"`
-	} `json:"replace"`
-	Ignore   []string `json:"ignore"`
-	LabelMap map[string]labelItem
-}
+func (l label) GetIssues(client *github.Client, user, repo, labelname string) ([]int, error) {
 
-type labelItem struct {
-	Color, Desc, ReplaceTo string
-	IsIgnore               bool
+	opt := &github.IssueListByRepoOptions{
+		State:     "open",
+		Sort:      "created",
+		Direction: "asc",
+		Labels:    []string{labelname},
+		ListOptions: github.ListOptions{
+			Page:    1,
+			PerPage: 100,
+		},
+	}
+
+	var issueNums []int
+	for {
+		issues, resp, err := client.Issues.ListByRepo(context.Background(), user, repo, opt)
+		if err != nil {
+			return nil, err
+		}
+		for _, is := range issues {
+			issueNums = append(issueNums, *is.Number)
+		}
+		if resp.NextPage == 0 {
+			break
+		}
+		opt.Page = resp.NextPage
+	}
+
+	return issueNums, nil
 }

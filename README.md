@@ -86,7 +86,7 @@ $ ./githubmgr label
     `duplicate`: update (color="cfd3d7" -> "cfd3d7", desc="This issue or pull request already exists")
 
   * replace labels
-    `wontfix`: replace to `pending` (issues=10, 13)
+    `wontfix`: replace to `pending` (issues=10, 13) and delete
 
   * ignore labels
     `question`
@@ -100,7 +100,7 @@ $ ./githubmgr label
     `enhancement` (issues=14)
 
   There is a label attached to issues in the delete labels.
-  Please dettatch it from issues or write a label definition.
+  Please dettatch it from issues or write a label settings.
 ```
 
 ## Config File
